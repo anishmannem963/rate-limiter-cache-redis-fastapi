@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Rate Limiting & Caching System — Live </title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #0f1117;
+    border-bottom: 1px solid #1e2530;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-brand { display: flex; align-items: center; gap: 10px; }
+  .header-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 6px #22c55e;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-title { font-size: 14px; font-weight: 600; color: #f8fafc; letter-spacing: .02em; }
+  .header-sub { font-size: 12px; color: #64748b; margin-top: 1px; }
+  .header-badges { display: flex; gap: 6px; }
+  .badge {
+    font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    font-weight: 500; letter-spacing: .03em;
+  }
+  .badge-blue  { background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb44; }
+  .badge-green { background: #14291f; color: #4ade80; border: 1px solid #16a34a44; }
+  .badge-amber { background: #2d1f05; color: #fbbf24; border: 1px solid #d9770644; }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-columns: 280px 1fr 320px; height: calc(100vh - 57px); }
+
+  /* ── Left Panel ── */
+  .panel-left {
+    background: #0d1117;
+    border-right: 1px solid #1e2530;
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .panel-section { padding: 16px; border-bottom: 1px solid #1e2530; }
+  .panel-label {
+    font-size: 10px; font-weight: 600; letter-spacing: .1em;
+    color: #475569; text-transform: uppercase; margin-bottom: 10px;
+  }
+
+  /* Client selector */
+  .client-card {
+    border: 1px solid #1e2530;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all .15s;
+    background: #0f1117;
+  }
+  .client-card:hover { border-color: #334155; background: #161b22; }
+  .client-card.active { border-color: #3b82f6; background: #1e3a5f22; }
+  .client-card-top { display: flex; align-items: center; justify-content: space-between; }
+  .client-name { font-size: 13px; font-weight: 500; color: #e2e8f0; }
+  .tier-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600;
+  }
+  .tier-free       { background:#14291f; color:#4ade80; }
+  .tier-pro        { background:#1e3a5f; color:#60a5fa; }
+  .tier-enterprise { background:#2d1f05; color:#fbbf24; }
+  .client-key { font-size: 10px; color: #475569; font-family: monospace; margin-top: 3px; }
+  .client-limit { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+  /* Endpoint selector */
+  .endpoint-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 6px;
+    cursor: pointer; margin-bottom: 4px;
+    border: 1px solid transparent;
+    transition: all .15s;
+  }
+  .endpoint-btn:hover { background: #161b22; border-color: #1e2530; }
+  .endpoint-btn.active { background: #161b22; border-color: #334155; }
+  .method-tag {
+    font-size: 10px; font-weight: 700; padding: 2px 5px;
+    border-radius: 3px; font-family: monospace; min-width: 36px; text-align: center;
+  }
+  .method-get  { background:#14291f; color:#4ade80; }
+  .method-post { background:#2d1f05; color:#fbbf24; }
+  .endpoint-path { font-size: 12px; color: #94a3b8; font-family: monospace; }
+  .endpoint-note { font-size: 10px; color: #475569; margin-left: auto; }
+
+  /* Controls */
+  .control-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .control-label { font-size: 12px; color: #94a3b8; }
+  .control-val { font-size: 13px; font-weight: 600; color: #f8fafc; font-family: monospace; }
+  input[type=range] {
+    width: 100%; accent-color: #3b82f6;
+    margin: 4px 0 10px;
+  }
+
+  .send-btn {
+    width: 100%; padding: 10px;
+    background: #1d4ed8; color: #fff;
+    border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .15s;
+    letter-spacing: .02em;
+  }
+  .send-btn:hover { background: #2563eb; }
+  .send-btn:disabled { background: #1e2530; color: #475569; cursor: not-allowed; }
+
+  .burst-btn {
+    width: 100%; padding: 8px;
+    background: #7c2d12; color: #fed7aa;
+    border: 1px solid #92400e; border-radius: 8px;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; margin-top: 6px; transition: background .15s;
+  }
+  .burst-btn:hover { background: #9a3412; }
+
+  /* ── Center Panel ── */
+  .panel-center {
+    display: flex; flex-direction: column;
+    overflow: hidden; background: #0f1117;
+  }
+
+  .center-top {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid #1e2530;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  .center-title { font-size: 13px; font-weight: 600; color: #94a3b8; }
+
+  /* Stats bar */
+  .stats-bar {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 1px; background: #1e2530; border-bottom: 1px solid #1e2530; flex-shrink: 0;
+  }
+  .stat-cell { background: #0d1117; padding: 10px 14px; }
+  .stat-label { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: .08em; }
+  .stat-value { font-size: 18px; font-weight: 700; margin-top: 2px; font-family: monospace; }
+  .stat-green { color: #22c55e; }
+  .stat-blue  { color: #60a5fa; }
+  .stat-amber { color: #fbbf24; }
+  .stat-red   { color: #f87171; }
+  .stat-purple{ color: #a78bfa; }
+
+  /* Request feed */
+  .request-feed {
+    flex: 1; overflow-y: auto; padding: 12px 20px;
+  }
+  .feed-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border-radius: 6px;
+    margin-bottom: 3px; font-size: 12px;
+    animation: slideIn .15s ease;
+    border-left: 3px solid transparent;
+  }
+  @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+  .feed-row.ok    { background: #0d1a0f; border-left-color: #22c55e; }
+  .feed-row.cached{ background: #0d1525; border-left-color: #60a5fa; }
+  .feed-row.limited{background: #1a0f0d; border-left-color: #f87171; }
+
+  .feed-time  { color: #475569; font-family: monospace; min-width: 56px; }
+  .feed-status{
+    font-size: 11px; font-weight: 700; min-width: 32px;
+    font-family: monospace;
+  }
+  .s200 { color: #22c55e; }
+  .s429 { color: #f87171; }
+  .feed-method{
+    font-size: 10px; font-weight: 700; padding: 1px 5px;
+    border-radius: 3px; font-family: monospace;
+  }
+  .feed-path  { color: #94a3b8; font-family: monospace; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .feed-tag   { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+  .tag-cached { background: #1e3a5f; color: #60a5fa; }
+  .tag-limited{ background: #3b0f0f; color: #f87171; }
+  .feed-ms    { color: #475569; font-family: monospace; min-width: 44px; text-align: right; }
+
+  /* Token bucket viz */
+  .bucket-section { padding: 12px 20px; border-top: 1px solid #1e2530; flex-shrink: 0; }
+  .bucket-label-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .bucket-label { font-size: 11px; color: #64748b; }
+  .bucket-tokens { font-size: 13px; font-weight: 700; font-family: monospace; color: #f8fafc; }
+  .bucket-bar-bg {
+    height: 8px; background: #1e2530; border-radius: 4px; overflow: hidden;
+  }
+  .bucket-bar-fill {
+    height: 100%; border-radius: 4px;
+    transition: width .3s ease, background .3s;
+  }
+
+  /* ── Right Panel ── */
+  .panel-right {
+    background: #0d1117;
+    border-left: 1px solid #1e2530;
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+
+  /* Architecture diagram */
+  .arch-diagram {
+    padding: 16px;
+    border-bottom: 1px solid #1e2530;
+  }
+  .arch-flow { display: flex; flex-direction: column; gap: 4px; }
+  .arch-step {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 10px; border-radius: 6px;
+    background: #0f1117; border: 1px solid #1e2530;
+    transition: all .2s;
+  }
+  .arch-step.active-step {
+    border-color: #3b82f6; background: #1e3a5f18;
+  }
+  .arch-step.pass-step {
+    border-color: #22c55e44; background: #0d1a0f;
+  }
+  .arch-step.fail-step {
+    border-color: #f8717144; background: #1a0f0d;
+  }
+  .arch-num {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #1e2530; color: #64748b;
+    font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .arch-step.pass-step .arch-num { background: #14291f; color: #22c55e; }
+  .arch-step.fail-step .arch-num { background: #3b0f0f; color: #f87171; }
+  .arch-step.active-step .arch-num { background: #1e3a5f; color: #60a5fa; }
+  .arch-step-title { font-size: 12px; font-weight: 600; color: #e2e8f0; }
+  .arch-step-sub { font-size: 11px; color: #475569; margin-top: 1px; }
+  .arch-arrow { text-align: center; color: #334155; font-size: 14px; line-height: 1; }
+
+  /* Response panel */
+  .response-section { padding: 16px; border-bottom: 1px solid #1e2530; }
+  .response-box {
+    background: #0f1117; border: 1px solid #1e2530;
+    border-radius: 8px; padding: 12px;
+    font-family: monospace; font-size: 11px;
+    color: #94a3b8; white-space: pre-wrap;
+    word-break: break-all;
+    min-height: 80px; max-height: 200px; overflow-y: auto;
+    line-height: 1.6;
+  }
+  .res-key   { color: #7dd3fc; }
+  .res-str   { color: #86efac; }
+  .res-num   { color: #fbbf24; }
+  .res-bool  { color: #f87171; }
+
+  /* Metrics section */
+  .metrics-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px; padding: 16px;
+  }
+  .metric-card {
+    background: #0f1117; border: 1px solid #1e2530;
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .metric-name { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: .08em; }
+  .metric-val { font-size: 20px; font-weight: 700; font-family: monospace; margin-top: 3px; }
+  .metric-sub { font-size: 10px; color: #475569; margin-top: 2px; }
+
+  /* Cache viz */
+  .cache-section { padding: 16px; }
+  .cache-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; padding: 5px 0;
+    border-bottom: 1px solid #1e253044;
+  }
+  .cache-key { font-family: monospace; color: #60a5fa; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cache-ttl-bar { width: 60px; height: 4px; background: #1e2530; border-radius: 2px; overflow: hidden; }
+  .cache-ttl-fill { height: 100%; background: #3b82f6; border-radius: 2px; transition: width 1s linear; }
+  .cache-ttl-text { font-size: 10px; color: #475569; font-family: monospace; min-width: 26px; text-align: right; }
+
+  .clear-btn {
+    font-size: 11px; color: #475569;
+    background: none; border: none; cursor: pointer;
+    padding: 0; text-decoration: underline;
+  }
+  .clear-btn:hover { color: #94a3b8; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1e2530; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-brand">
+    <div class="header-dot"></div>
+    <div>
+      <div class="header-title">API Rate Limiting & Caching System</div>
+      <div class="header-sub">Live interactive demo — FastAPI + Redis + PostgreSQL</div>
+    </div>
+  </div>
+  <div class="header-badges">
+    <span class="badge badge-blue">Token Bucket</span>
+    <span class="badge badge-green">Redis Cache</span>
+    <span class="badge badge-amber">CloudWatch Metrics</span>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- ── LEFT PANEL ── -->
+  <div class="panel-left">
+
+    <div class="panel-section">
+      <div class="panel-label">API Client</div>
+      <div id="client-list">
+        <div class="client-card active" data-key="ak_free_demo_key_001" data-limit="10" data-window="60" onclick="selectClient(this)">
+          <div class="client-card-top">
+            <span class="client-name">Free Tier</span>
+            <span class="tier-badge tier-free">FREE</span>
+          </div>
+          <div class="client-key">ak_free_demo_key_001</div>
+          <div class="client-limit">10 req / 60s · bursts to 15</div>
+        </div>
+        <div class="client-card" data-key="ak_pro_demo_key_002" data-limit="300" data-window="60" onclick="selectClient(this)">
+          <div class="client-card-top">
+            <span class="client-name">Pro Tier</span>
+            <span class="tier-badge tier-pro">PRO</span>
+          </div>
+          <div class="client-key">ak_pro_demo_key_002</div>
+          <div class="client-limit">300 req / 60s · bursts to 450</div>
+        </div>
+        <div class="client-card" data-key="ak_enterprise_demo_key_003" data-limit="1000" data-window="60" onclick="selectClient(this)">
+          <div class="client-card-top">
+            <span class="client-name">Enterprise</span>
+            <span class="tier-badge tier-enterprise">ENTERPRISE</span>
+          </div>
+          <div class="client-key">ak_enterprise_demo_key_003</div>
+          <div class="client-limit">1000 req / 60s · bursts to 1500</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Endpoint</div>
+      <div id="endpoint-list">
+        <div class="endpoint-btn active" data-path="/api/products" data-method="GET" data-cacheable="true" data-ttl="60" onclick="selectEndpoint(this)">
+          <span class="method-tag method-get">GET</span>
+          <span class="endpoint-path">/api/products</span>
+          <span class="endpoint-note">60s TTL</span>
+        </div>
+        <div class="endpoint-btn" data-path="/api/products/42" data-method="GET" data-cacheable="true" data-ttl="60" onclick="selectEndpoint(this)">
+          <span class="method-tag method-get">GET</span>
+          <span class="endpoint-path">/api/products/42</span>
+          <span class="endpoint-note">60s TTL</span>
+        </div>
+        <div class="endpoint-btn" data-path="/api/users/7" data-method="GET" data-cacheable="true" data-ttl="30" onclick="selectEndpoint(this)">
+          <span class="method-tag method-get">GET</span>
+          <span class="endpoint-path">/api/users/7</span>
+          <span class="endpoint-note">30s TTL</span>
+        </div>
+        <div class="endpoint-btn" data-path="/api/stats" data-method="GET" data-cacheable="true" data-ttl="10" onclick="selectEndpoint(this)">
+          <span class="method-tag method-get">GET</span>
+          <span class="endpoint-path">/api/stats</span>
+          <span class="endpoint-note">10s TTL</span>
+        </div>
+        <div class="endpoint-btn" data-path="/api/products" data-method="POST" data-cacheable="false" data-ttl="0" onclick="selectEndpoint(this)">
+          <span class="method-tag method-post">POST</span>
+          <span class="endpoint-path">/api/products</span>
+          <span class="endpoint-note">invalidates</span>
+        </div>
+        <div class="endpoint-btn" data-path="/metrics" data-method="GET" data-cacheable="false" data-ttl="0" onclick="selectEndpoint(this)">
+          <span class="method-tag method-get">GET</span>
+          <span class="endpoint-path">/metrics</span>
+          <span class="endpoint-note">exempt</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Fire Requests</div>
+      <div class="control-row">
+        <span class="control-label">Count</span>
+        <span class="control-val" id="count-val">1</span>
+      </div>
+      <input type="range" min="1" max="20" value="1" id="req-count" oninput="document.getElementById('count-val').textContent=this.value">
+
+      <div class="control-row">
+        <span class="control-label">Delay (ms)</span>
+        <span class="control-val" id="delay-val">100</span>
+      </div>
+      <input type="range" min="0" max="500" step="50" value="100" id="req-delay" oninput="document.getElementById('delay-val').textContent=this.value">
+
+      <button class="send-btn" onclick="fireRequests()">▶ Send Request</button>
+      <button class="burst-btn" onclick="burstRequests()">⚡ Burst Attack (exhaust limit)</button>
+    </div>
+
+    <div class="panel-section" style="border-bottom:none;">
+      <div class="panel-label">Scenario shortcuts</div>
+      <button class="send-btn" style="background:#134e4a;margin-bottom:6px;" onclick="runScenario('cache')">Demo: Cache Hit / Miss</button>
+      <button class="send-btn" style="background:#1e3a5f;margin-bottom:6px;" onclick="runScenario('429')">Demo: Trigger 429s</button>
+      <button class="send-btn" style="background:#422006;" onclick="runScenario('invalidate')">Demo: Cache Invalidation</button>
+    </div>
+
+  </div>
+
+  <!-- ── CENTER PANEL ── -->
+  <div class="panel-center">
+
+    <div class="center-top">
+      <span class="center-title">Request Feed</span>
+      <button class="clear-btn" onclick="clearFeed()">clear</button>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-cell">
+        <div class="stat-label">Total</div>
+        <div class="stat-value stat-blue" id="stat-total">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">200 OK</div>
+        <div class="stat-value stat-green" id="stat-ok">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">429 Throttled</div>
+        <div class="stat-value stat-red" id="stat-throttled">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Cache Hits</div>
+        <div class="stat-value stat-blue" id="stat-cache">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">Avg Latency</div>
+        <div class="stat-value stat-purple" id="stat-latency">0ms</div>
+      </div>
+    </div>
+
+    <div class="request-feed" id="feed"></div>
+
+    <div class="bucket-section">
+      <div class="bucket-label-row">
+        <span class="bucket-label">Token Bucket — <span id="bucket-client-name">Free Tier</span></span>
+        <span class="bucket-tokens"><span id="bucket-cur">10</span> / <span id="bucket-max">10</span> tokens</span>
+      </div>
+      <div class="bucket-bar-bg">
+        <div class="bucket-bar-fill" id="bucket-fill" style="width:100%;background:#22c55e;"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── RIGHT PANEL ── -->
+  <div class="panel-right">
+
+    <div class="arch-diagram">
+      <div class="panel-label">Request lifecycle</div>
+      <div class="arch-flow" id="arch-flow">
+        <div class="arch-step" id="step-0">
+          <div class="arch-num">1</div>
+          <div>
+            <div class="arch-step-title">Identify client</div>
+            <div class="arch-step-sub">X-API-Key or IP fallback</div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-step" id="step-1">
+          <div class="arch-num">2</div>
+          <div>
+            <div class="arch-step-title">Token bucket check</div>
+            <div class="arch-step-sub">Lua script — atomic in Redis</div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-step" id="step-2">
+          <div class="arch-num">3</div>
+          <div>
+            <div class="arch-step-title">Cache lookup</div>
+            <div class="arch-step-sub">Redis GET — HIT returns instantly</div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-step" id="step-3">
+          <div class="arch-num">4</div>
+          <div>
+            <div class="arch-step-title">Route handler</div>
+            <div class="arch-step-sub">FastAPI — only on cache MISS</div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-step" id="step-4">
+          <div class="arch-num">5</div>
+          <div>
+            <div class="arch-step-title">Cache + log</div>
+            <div class="arch-step-sub">SET in Redis · write to PostgreSQL</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="response-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="panel-label" style="margin-bottom:0">Last response</div>
+        <div id="res-headers" style="font-size:10px;color:#475569;font-family:monospace;"></div>
+      </div>
+      <div class="response-box" id="response-box">Waiting for first request...</div>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-name">Requests/sec</div>
+        <div class="metric-val stat-blue" id="m-rps">0.0</div>
+        <div class="metric-sub">rolling 60s window</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">Cache hit ratio</div>
+        <div class="metric-val stat-green" id="m-hitrate">0%</div>
+        <div class="metric-sub">Redis hits vs misses</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">p99 latency</div>
+        <div class="metric-val stat-purple" id="m-p99">0ms</div>
+        <div class="metric-sub">worst-case response</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-name">Throttle rate</div>
+        <div class="metric-val stat-red" id="m-throttle">0%</div>
+        <div class="metric-sub">429s / total requests</div>
+      </div>
+    </div>
+
+    <div class="cache-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="panel-label" style="margin-bottom:0">Redis cache state</div>
+        <button class="clear-btn" onclick="clearCache()">flush</button>
+      </div>
+      <div id="cache-entries">
+        <div style="font-size:12px;color:#334155;">No cached entries yet.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const state = {
+  client: { key: 'ak_free_demo_key_001', limit: 10, window: 60, name: 'Free Tier' },
+  endpoint: { path: '/api/products', method: 'GET', cacheable: true, ttl: 60 },
+  tokens: 10,
+  maxTokens: 15,
+  stats: { total: 0, ok: 0, throttled: 0, cacheHits: 0, latencies: [] },
+  cache: {},
+  cacheTimers: {},
+  requestTimes: [],
+  running: false,
+};
+
+const MOCK_RESPONSES = {
+  'GET /api/products':    { products: [{id:1,name:'Product 1',price:9.99},{id:2,name:'Product 2',price:19.99}], page: 1, total: 1000 },
+  'GET /api/products/42':{ id: 42, name: 'Product 42', price: 418.58 },
+  'GET /api/users/7':    { id: 7, name: 'User 7', email: 'user7@example.com' },
+  'GET /api/stats':      { active_users: 1423, requests_today: 84201, uptime_seconds: 604800 },
+  'POST /api/products':  { id: 9999, name: 'New Product', price: 49.99, created: true },
+  'GET /metrics':        { metrics: { requests_per_second: 12.4, cache: { hit_ratio: 0.71 } } },
+};
+
+function selectClient(el) {
+  document.querySelectorAll('.client-card').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  state.client = {
+    key: el.dataset.key,
+    limit: parseInt(el.dataset.limit),
+    window: parseInt(el.dataset.window),
+    name: el.querySelector('.client-name').textContent,
+  };
+  state.maxTokens = Math.floor(state.client.limit * 1.5);
+  state.tokens = state.maxTokens;
+  updateBucket();
+}
+
+function selectEndpoint(el) {
+  document.querySelectorAll('.endpoint-btn').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  state.endpoint = {
+    path: el.dataset.path,
+    method: el.dataset.method,
+    cacheable: el.dataset.cacheable === 'true',
+    ttl: parseInt(el.dataset.ttl),
+  };
+}
+
+function now() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+}
+
+function simulateRequest() {
+  const { client, endpoint } = state;
+  const isExempt = endpoint.path === '/metrics';
+  const cacheKey = `${endpoint.method} ${endpoint.path}`;
+  const isCacheHit = endpoint.cacheable && !isExempt && state.cache[cacheKey]?.active;
+
+  let status, limited, cached, latencyMs;
+
+  if (isExempt) {
+    status = 200; limited = false; cached = false; latencyMs = randInt(2, 8);
+  } else if (state.tokens < 1) {
+    status = 429; limited = true; cached = false; latencyMs = randInt(1, 5);
+  } else {
+    if (endpoint.method !== 'GET') {
+      Object.keys(state.cache).forEach(k => {
+        if (k.includes(endpoint.path.split('?')[0])) clearCacheEntry(k);
+      });
+    }
+    state.tokens = Math.max(0, state.tokens - 1);
+    if (isCacheHit) {
+      status = 200; limited = false; cached = true; latencyMs = randInt(2, 12);
+    } else {
+      status = 200; limited = false; cached = false;
+      latencyMs = endpoint.path === '/api/stats' ? randInt(5,20) : randInt(20, 80);
+      if (endpoint.cacheable && endpoint.method === 'GET') {
+        setCacheEntry(cacheKey, endpoint.ttl);
+      }
+    }
+  }
+
+  state.stats.total++;
+  state.requestTimes.push(Date.now());
+  state.requestTimes = state.requestTimes.filter(t => Date.now() - t < 60000);
+
+  if (status === 200) state.stats.ok++;
+  else state.stats.throttled++;
+  if (cached) state.stats.cacheHits++;
+  state.stats.latencies.push(latencyMs);
+  if (state.stats.latencies.length > 200) state.stats.latencies.shift();
+
+  animateLifecycle(limited, cached, endpoint.method !== 'GET');
+
+  const response = buildResponseJSON(status, limited, cached, cacheKey, endpoint);
+  addFeedRow(status, limited, cached, endpoint.method, endpoint.path, latencyMs);
+  showResponse(response, status, limited, cached, latencyMs);
+  updateStats();
+  updateBucket();
+  updateMetrics();
+  updateCachePanel();
+}
+
+function buildResponseJSON(status, limited, cached, cacheKey, endpoint) {
+  if (status === 429) {
+    return { error: 'Too Many Requests', detail: `Rate limit of ${state.client.limit} req/${state.client.window}s exceeded.`, retry_after: Math.ceil(state.client.limit / state.client.limit) };
+  }
+  const body = MOCK_RESPONSES[cacheKey] || { ok: true };
+  return body;
+}
+
+function addFeedRow(status, limited, cached, method, path, latency) {
+  const feed = document.getElementById('feed');
+  const row = document.createElement('div');
+  const cls = limited ? 'limited' : cached ? 'cached' : 'ok';
+  const methodCls = method === 'GET' ? 'method-get' : 'method-post';
+  const statusCls = status === 200 ? 's200' : 's429';
+  let tags = '';
+  if (cached)  tags += `<span class="feed-tag tag-cached">CACHE HIT</span>`;
+  if (limited) tags += `<span class="feed-tag tag-limited">THROTTLED</span>`;
+  row.className = `feed-row ${cls}`;
+  row.innerHTML = `
+    <span class="feed-time">${now()}</span>
+    <span class="feed-status ${statusCls}">${status}</span>
+    <span class="feed-method ${methodCls}">${method}</span>
+    <span class="feed-path">${path}</span>
+    ${tags}
+    <span class="feed-ms">${latency}ms</span>
+  `;
+  feed.insertBefore(row, feed.firstChild);
+  if (feed.children.length > 120) feed.removeChild(feed.lastChild);
+}
+
+function showResponse(data, status, limited, cached, latency) {
+  const box = document.getElementById('response-box');
+  box.innerHTML = syntaxHighlight(JSON.stringify(data, null, 2));
+  const headers = [];
+  if (!limited) headers.push(`X-RateLimit-Remaining: ${Math.floor(state.tokens)}`);
+  headers.push(`X-Cache: ${cached ? 'HIT' : 'MISS'}`);
+  if (limited) headers.push(`Retry-After: ${state.client.window}`);
+  document.getElementById('res-headers').textContent = headers.join('  ·  ');
+}
+
+function syntaxHighlight(json) {
+  return json
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
+      let cls = 'res-num';
+      if (/^"/.test(match)) { cls = /:$/.test(match) ? 'res-key' : 'res-str'; }
+      else if (/true|false/.test(match)) cls = 'res-bool';
+      return `<span class="${cls}">${match}</span>`;
+    });
+}
+
+function updateBucket() {
+  const pct = state.maxTokens > 0 ? (state.tokens / state.maxTokens) * 100 : 0;
+  const fill = document.getElementById('bucket-fill');
+  fill.style.width = pct + '%';
+  fill.style.background = pct > 60 ? '#22c55e' : pct > 25 ? '#fbbf24' : '#f87171';
+  document.getElementById('bucket-cur').textContent = Math.floor(state.tokens);
+  document.getElementById('bucket-max').textContent = state.maxTokens;
+  document.getElementById('bucket-client-name').textContent = state.client.name;
+}
+
+function updateStats() {
+  document.getElementById('stat-total').textContent = state.stats.total;
+  document.getElementById('stat-ok').textContent = state.stats.ok;
+  document.getElementById('stat-throttled').textContent = state.stats.throttled;
+  document.getElementById('stat-cache').textContent = state.stats.cacheHits;
+  const avg = state.stats.latencies.length
+    ? Math.round(state.stats.latencies.reduce((a,b) => a+b,0) / state.stats.latencies.length)
+    : 0;
+  document.getElementById('stat-latency').textContent = avg + 'ms';
+}
+
+function updateMetrics() {
+  const rps = (state.requestTimes.length / 60).toFixed(1);
+  document.getElementById('m-rps').textContent = rps;
+  const hitRate = state.stats.total > 0
+    ? Math.round((state.stats.cacheHits / state.stats.total) * 100) + '%' : '0%';
+  document.getElementById('m-hitrate').textContent = hitRate;
+  const sorted = [...state.stats.latencies].sort((a,b) => a-b);
+  const p99 = sorted.length ? sorted[Math.floor(sorted.length * 0.99)] || sorted[sorted.length-1] : 0;
+  document.getElementById('m-p99').textContent = Math.round(p99) + 'ms';
+  const throttleRate = state.stats.total > 0
+    ? Math.round((state.stats.throttled / state.stats.total) * 100) + '%' : '0%';
+  document.getElementById('m-throttle').textContent = throttleRate;
+}
+
+function setCacheEntry(key, ttl) {
+  if (state.cacheTimers[key]) clearTimeout(state.cacheTimers[key]);
+  state.cache[key] = { ttl, maxTtl: ttl, created: Date.now(), active: true };
+  state.cacheTimers[key] = setTimeout(() => clearCacheEntry(key), ttl * 1000);
+  updateCachePanel();
+}
+
+function clearCacheEntry(key) {
+  if (state.cache[key]) { state.cache[key].active = false; delete state.cache[key]; }
+  updateCachePanel();
+}
+
+function updateCachePanel() {
+  const el = document.getElementById('cache-entries');
+  const entries = Object.entries(state.cache).filter(([,v]) => v.active);
+  if (!entries.length) {
+    el.innerHTML = '<div style="font-size:12px;color:#334155;">No cached entries.</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([key, val]) => {
+    const elapsed = (Date.now() - val.created) / 1000;
+    const remaining = Math.max(0, val.ttl - elapsed);
+    const pct = (remaining / val.maxTtl) * 100;
+    return `<div class="cache-row">
+      <span class="cache-key">${key}</span>
+      <div class="cache-ttl-bar"><div class="cache-ttl-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <span class="cache-ttl-text">${Math.ceil(remaining)}s</span>
+    </div>`;
+  }).join('');
+}
+
+setInterval(updateCachePanel, 500);
+setInterval(() => {
+  if (state.tokens < state.maxTokens) {
+    state.tokens = Math.min(state.maxTokens, state.tokens + (state.client.limit / state.client.window) * 0.5);
+    updateBucket();
+  }
+}, 500);
+
+function animateLifecycle(limited, cached, isMutation) {
+  const steps = [0,1,2,3,4];
+  steps.forEach(i => {
+    const el = document.getElementById(`step-${i}`);
+    el.classList.remove('active-step','pass-step','fail-step');
+  });
+
+  let delay = 0;
+  const animate = (i, cls, duration) => {
+    setTimeout(() => {
+      const el = document.getElementById(`step-${i}`);
+      if (el) {
+        el.classList.add(cls);
+        setTimeout(() => { if(el) el.classList.remove(cls); }, duration);
+      }
+    }, delay);
+    delay += 120;
+  };
+
+  animate(0, 'active-step', 400);
+  if (limited) {
+    animate(1, 'fail-step', 1200);
+    return;
+  }
+  animate(1, 'pass-step', 600);
+  if (cached) {
+    animate(2, 'fail-step', 1200);
+    return;
+  }
+  animate(2, 'pass-step', 600);
+  animate(3, 'pass-step', 600);
+  animate(4, 'pass-step', 600);
+}
+
+async function fireRequests() {
+  const count = parseInt(document.getElementById('req-count').value);
+  const delay = parseInt(document.getElementById('req-delay').value);
+  for (let i = 0; i < count; i++) {
+    simulateRequest();
+    if (i < count - 1 && delay > 0) await sleep(delay);
+  }
+}
+
+async function burstRequests() {
+  const burst = state.maxTokens + 5;
+  for (let i = 0; i < burst; i++) {
+    simulateRequest();
+    await sleep(30);
+  }
+}
+
+async function runScenario(type) {
+  if (type === 'cache') {
+    const ep = document.querySelector('[data-path="/api/products"][data-method="GET"]');
+    selectEndpoint(ep);
+    await sleep(100);
+    simulateRequest();
+    await sleep(300);
+    simulateRequest();
+    await sleep(300);
+    simulateRequest();
+  } else if (type === '429') {
+    const free = document.querySelector('[data-key="ak_free_demo_key_001"]');
+    selectClient(free);
+    const ep = document.querySelector('[data-path="/api/products"][data-method="GET"]');
+    selectEndpoint(ep);
+    await sleep(100);
+    for (let i = 0; i < 18; i++) {
+      simulateRequest();
+      await sleep(60);
+    }
+  } else if (type === 'invalidate') {
+    const ep = document.querySelector('[data-path="/api/products"][data-method="GET"]');
+    selectEndpoint(ep);
+    await sleep(100);
+    simulateRequest();
+    await sleep(400);
+    simulateRequest();
+    await sleep(400);
+    const post = document.querySelector('[data-path="/api/products"][data-method="POST"]');
+    selectEndpoint(post);
+    await sleep(200);
+    simulateRequest();
+    await sleep(300);
+    selectEndpoint(ep);
+    await sleep(200);
+    simulateRequest();
+  }
+}
+
+function clearFeed() { document.getElementById('feed').innerHTML = ''; }
+function clearCache() { Object.keys(state.cache).forEach(k => clearCacheEntry(k)); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+</script>
+</body>
+</html>
