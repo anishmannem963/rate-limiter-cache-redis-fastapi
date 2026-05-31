@@ -52,6 +52,7 @@ A production-style backend demonstrating:
 - **Structured Observability** — JSON logs + live /metrics endpoint
 - **CloudWatch-ready** — metrics exportable to AWS CloudWatch
 
+
 ### Quick start
 1. Register a client: `POST /admin/clients`
 2. Use the returned `api_key` in `X-API-Key` header
