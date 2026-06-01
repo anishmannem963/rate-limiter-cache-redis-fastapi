@@ -2,7 +2,6 @@
 
 A production-style backend system built with **FastAPI**, **Redis**, and **PostgreSQL** — demonstrating token bucket rate limiting, response caching, request deduplication, and live observability.
 
-Built as an educational project to explore distributed systems concepts commonly asked about in SDE interviews.
 
 ---
 
